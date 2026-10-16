@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownsSession(code) {
+      return signedIn() &&
+        get(/databases/$(database)/documents/sessions/$(code)).data.ownerUid == request.auth.uid;
+    }
+
+    match /sessions/{code} {
+      allow read: if signedIn();
+      allow create: if signedIn() &&
+        request.resource.data.ownerUid == request.auth.uid &&
+        request.resource.data.maxStudents == 30;
+      allow update, delete: if ownsSession(code);
+
+      match /responses/{responseId} {
+        allow read: if signedIn();
+        allow create: if signedIn() &&
+          get(/databases/$(database)/documents/sessions/$(code)).data.open == true &&
+          get(/databases/$(database)/documents/sessions/$(code)).data.paused == false &&
+          request.resource.data.uid == request.auth.uid &&
+          request.resource.data.word is string &&
+          request.resource.data.word.size() > 0 &&
+          request.resource.data.word.size() <= 8 &&
+          request.resource.data.group is string &&
+          request.resource.data.seat is string;
+        allow update: if false;
+        allow delete: if ownsSession(code);
+      }
+
+      match /learningRecords/{recordId} {
+        allow read: if signedIn();
+        allow create: if signedIn() &&
+          get(/databases/$(database)/documents/sessions/$(code)).data.open == true &&
+          get(/databases/$(database)/documents/sessions/$(code)).data.paused == false &&
+          request.resource.data.uid == request.auth.uid &&
+          request.resource.data.group is string &&
+          request.resource.data.seat is string &&
+          ((request.resource.data.activity == "observation" &&
+            request.resource.data.first is string &&
+            request.resource.data.first.size() > 0 &&
+            request.resource.data.first.size() <= 180 &&
+            request.resource.data.second is string &&
+            request.resource.data.second.size() > 0 &&
+            request.resource.data.second.size() <= 240) ||
+           (request.resource.data.activity == "reading-note" &&
+            request.resource.data.note is string &&
+            request.resource.data.note.size() > 0 &&
+            request.resource.data.note.size() <= 180 &&
+            request.resource.data.reactions == 0));
+        allow update: if signedIn() &&
+          resource.data.activity == "reading-note" &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(["reactions"]) &&
+          request.resource.data.reactions == resource.data.reactions + 1;
+        allow delete: if ownsSession(code);
+      }
+    }
+  }
+}
